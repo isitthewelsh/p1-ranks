@@ -4,6 +4,11 @@ Fetches current-season MLB Stats API data (headshot ID + hitting/pitching lines)
 for every player in the Top 500 and Top 400 Dynasty lists embedded in index.html,
 and writes the result to data/stats-snapshot.csv.
 
+Checks MLB first, then falls back through affiliated minor-league levels
+(Triple-A -> Double-A -> High-A -> Single-A -> Rookie) so prospects who
+haven't debuted yet still get their current-level stat line, since the MLB
+Stats API covers the full minor-league system under different sportIds.
+
 Run weekly by .github/workflows/update-stats.yml. Can also be run manually:
     python3 scripts/update_stats.py
 """
@@ -24,7 +29,17 @@ OUT_CSV = ROOT / "data" / "stats-snapshot.csv"
 OUT_META = ROOT / "data" / "meta.json"
 
 SEASONS_TO_TRY = [2026, 2025]
-MAX_WORKERS = 8
+# (sportId, display label), checked in order -- MLB first, then most advanced
+# minor-league level down to Rookie ball.
+LEVELS_TO_TRY = [
+    (1, "MLB"),
+    (11, "AAA"),
+    (12, "AA"),
+    (13, "A+"),
+    (14, "A"),
+    (16, "ROK"),
+]
+MAX_WORKERS = 16
 REQUEST_TIMEOUT = 10
 
 
@@ -59,10 +74,10 @@ def fetch_player_id(session, name):
     return match["id"] if match else None
 
 
-def fetch_season_stat(session, player_id, group, season):
+def fetch_season_stat(session, player_id, group, season, sport_id):
     url = (
         f"https://statsapi.mlb.com/api/v1/people/{player_id}/stats"
-        f"?stats=season&group={group}&season={season}"
+        f"?stats=season&group={group}&season={season}&sportId={sport_id}"
     )
     try:
         r = session.get(url, timeout=REQUEST_TIMEOUT)
@@ -81,6 +96,7 @@ def fetch_player_row(session, name):
         "name": name,
         "mlb_id": player_id or "",
         "season": "",
+        "level": "",
         "h_avg": "", "h_hr": "", "h_rbi": "", "h_r": "", "h_sb": "",
         "p_w": "", "p_era": "", "p_whip": "", "p_k": "", "p_ip": "",
     }
@@ -88,23 +104,25 @@ def fetch_player_row(session, name):
         return row
 
     for season in SEASONS_TO_TRY:
-        hitting = fetch_season_stat(session, player_id, "hitting", season)
-        pitching = fetch_season_stat(session, player_id, "pitching", season)
-        if hitting or pitching:
-            row["season"] = season
-            if hitting:
-                row["h_avg"] = hitting.get("avg", "")
-                row["h_hr"] = hitting.get("homeRuns", "")
-                row["h_rbi"] = hitting.get("rbi", "")
-                row["h_r"] = hitting.get("runs", "")
-                row["h_sb"] = hitting.get("stolenBases", "")
-            if pitching:
-                row["p_w"] = pitching.get("wins", "")
-                row["p_era"] = pitching.get("era", "")
-                row["p_whip"] = pitching.get("whip", "")
-                row["p_k"] = pitching.get("strikeOuts", "")
-                row["p_ip"] = pitching.get("inningsPitched", "")
-            break
+        for sport_id, level_label in LEVELS_TO_TRY:
+            hitting = fetch_season_stat(session, player_id, "hitting", season, sport_id)
+            pitching = fetch_season_stat(session, player_id, "pitching", season, sport_id)
+            if hitting or pitching:
+                row["season"] = season
+                row["level"] = level_label
+                if hitting:
+                    row["h_avg"] = hitting.get("avg", "")
+                    row["h_hr"] = hitting.get("homeRuns", "")
+                    row["h_rbi"] = hitting.get("rbi", "")
+                    row["h_r"] = hitting.get("runs", "")
+                    row["h_sb"] = hitting.get("stolenBases", "")
+                if pitching:
+                    row["p_w"] = pitching.get("wins", "")
+                    row["p_era"] = pitching.get("era", "")
+                    row["p_whip"] = pitching.get("whip", "")
+                    row["p_k"] = pitching.get("strikeOuts", "")
+                    row["p_ip"] = pitching.get("inningsPitched", "")
+                return row
     return row
 
 
@@ -127,7 +145,7 @@ def main():
     rows.sort(key=lambda r: r["name"])
 
     OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["name", "mlb_id", "season",
+    fieldnames = ["name", "mlb_id", "season", "level",
                   "h_avg", "h_hr", "h_rbi", "h_r", "h_sb",
                   "p_w", "p_era", "p_whip", "p_k", "p_ip"]
     with OUT_CSV.open("w", newline="", encoding="utf-8") as f:

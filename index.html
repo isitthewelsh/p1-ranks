@@ -288,6 +288,10 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
 .stat-row{ display:flex; justify-content:space-between; font-size:10.5px; gap:6px; }
 .stat-row .k{ color:var(--muted-2); }
 .stat-row .v{ color:var(--chalk-dim); font-weight:600; }
+.stat-level{
+  font-size:9px; letter-spacing:0.5px; text-transform:uppercase;
+  color:var(--gold); font-weight:700; margin-bottom:2px;
+}
 .stat-loading{ font-size:10px; color:var(--muted-2); font-style:italic; }
 .stat-empty{ font-size:10px; color:var(--muted-2); }
 
@@ -648,27 +652,28 @@ async function loadCardData(el){
   }
   applyHeadshot(img, ini, row.mlb_id);
   if(!statBox) return;
-  renderStatBox(statBox, rowToStats(row), pos);
+  renderStatBox(statBox, rowToStats(row), pos, row.level);
 }
 
-function renderStatBox(el, stats, pos){
+function renderStatBox(el, stats, pos, level){
   if(!stats || (!stats.hitting && !stats.pitching)){
-    el.innerHTML = '<div class="stat-empty">No 2026 stats yet</div>';
+    el.innerHTML = '<div class="stat-empty">No 2025/2026 stats yet</div>';
     return;
   }
+  const levelTag = level && level!=='MLB' ? `<div class="stat-level">${level}</div>` : '';
   const pitcherPref = isPitcher(pos);
   const useP = pitcherPref ? (stats.pitching || stats.hitting) : null;
   if(pitcherPref && stats.pitching){
     const s = stats.pitching;
-    el.innerHTML = statRow('W', s.wins ?? '-') + statRow('ERA', s.era ?? '-') + statRow('WHIP', s.whip ?? '-') + statRow('K', s.strikeOuts ?? '-');
+    el.innerHTML = levelTag + statRow('W', s.wins ?? '-') + statRow('ERA', s.era ?? '-') + statRow('WHIP', s.whip ?? '-') + statRow('K', s.strikeOuts ?? '-');
   } else if(stats.hitting){
     const s = stats.hitting;
-    el.innerHTML = statRow('AVG', s.avg ?? '-') + statRow('HR', s.homeRuns ?? '-') + statRow('RBI', s.rbi ?? '-') + statRow('R', s.runs ?? '-') + statRow('SB', s.stolenBases ?? '-');
+    el.innerHTML = levelTag + statRow('AVG', s.avg ?? '-') + statRow('HR', s.homeRuns ?? '-') + statRow('RBI', s.rbi ?? '-') + statRow('R', s.runs ?? '-') + statRow('SB', s.stolenBases ?? '-');
   } else if(stats.pitching){
     const s = stats.pitching;
-    el.innerHTML = statRow('W', s.wins ?? '-') + statRow('ERA', s.era ?? '-') + statRow('WHIP', s.whip ?? '-') + statRow('K', s.strikeOuts ?? '-');
+    el.innerHTML = levelTag + statRow('W', s.wins ?? '-') + statRow('ERA', s.era ?? '-') + statRow('WHIP', s.whip ?? '-') + statRow('K', s.strikeOuts ?? '-');
   } else {
-    el.innerHTML = '<div class="stat-empty">No 2026 stats yet</div>';
+    el.innerHTML = '<div class="stat-empty">No 2025/2026 stats yet</div>';
   }
 }
 function statRow(k,v){
@@ -1017,7 +1022,9 @@ async function openModal(p){
     cells = [['W',s.wins],['ERA',s.era],['WHIP',s.whip],['K',s.strikeOuts],['IP',s.inningsPitched]];
   }
   statsEl.innerHTML = cells.map(([k,v])=>`<div><div class="mv">${v ?? '-'}</div><div class="mk">${k}</div></div>`).join('');
-  document.getElementById('modal-legend').textContent = 'Most recent season with recorded stats (2026 or 2025).';
+  const levelNames = {MLB:'MLB', AAA:'Triple-A', AA:'Double-A', 'A+':'High-A', A:'Single-A', ROK:'Rookie'};
+  const levelName = levelNames[row.level] || row.level;
+  document.getElementById('modal-legend').textContent = `${row.season} ${levelName} stats · most recent level with a recorded season.`;
 }
 </script>
 </body>

@@ -704,12 +704,14 @@ function renderStatBox(el, stats, pos, level){
   if(isTwoWayPlayer(stats)){
     // Two-way player (e.g. Shohei Ohtani) -- show both lines instead of
     // picking one based on listed position.
+    // Condensed on the card to keep it from towering over its grid row --
+    // click the card for the full breakdown of both lines in the modal.
     const h = stats.hitting, p = stats.pitching;
     el.innerHTML = levelTag
       + '<div class="stat-group-label">Pitching</div>'
-      + statRow('W', p.wins ?? '-') + statRow('ERA', p.era ?? '-') + statRow('WHIP', p.whip ?? '-') + statRow('K', p.strikeOuts ?? '-')
+      + statRow('W', p.wins ?? '-') + statRow('ERA', p.era ?? '-')
       + '<div class="stat-group-label">Hitting</div>'
-      + statRow('AVG', h.avg ?? '-') + statRow('HR', h.homeRuns ?? '-') + statRow('RBI', h.rbi ?? '-') + statRow('R', h.runs ?? '-') + statRow('SB', h.stolenBases ?? '-');
+      + statRow('AVG', h.avg ?? '-') + statRow('HR', h.homeRuns ?? '-') + statRow('RBI', h.rbi ?? '-');
     return;
   }
   const pitcherPref = isPitcher(pos);

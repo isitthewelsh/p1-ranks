@@ -26,7 +26,7 @@
   --gold: #e3b23c;
   --gold-dim: #a9822f;
   --up: #6fbf6a;
-  --down: #d3564f;
+  --down: #e58079;
   --font-display: 'Anton', sans-serif;
   --font-body: 'Inter', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
@@ -185,6 +185,7 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
   outline:none;
   cursor:pointer;
 }
+.controls select:focus{ border-color:var(--clay-bright); }
 .chip-row{ display:flex; gap:6px; flex-wrap:wrap; }
 .chip{
   border:1px solid var(--line);
@@ -226,6 +227,11 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
   border-color:var(--muted-2);
   transform:translateY(-2px);
   box-shadow:0 10px 24px -12px rgba(0,0,0,0.6);
+}
+.card:focus-visible{
+  border-color:var(--clay-bright);
+  outline:2px solid var(--clay-bright);
+  outline-offset:2px;
 }
 .card .teamstripe{
   width:5px; flex:none;
@@ -286,7 +292,7 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
   display:flex; flex-direction:column; justify-content:center; gap:2px;
 }
 .stat-row{ display:flex; justify-content:space-between; font-size:10.5px; gap:6px; }
-.stat-row .k{ color:var(--muted-2); }
+.stat-row .k{ color:var(--muted); }
 .stat-row .v{ color:var(--chalk-dim); font-weight:600; }
 .stat-level{
   font-size:9px; letter-spacing:0.5px; text-transform:uppercase;
@@ -398,7 +404,7 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
 .modal-stats{ margin-top:18px; display:grid; grid-template-columns:repeat(5,1fr); gap:8px; }
 .modal-stats div{ text-align:center; background:var(--bg-alt); border-radius:8px; padding:10px 4px; }
 .modal-stats .mv{ font-family:var(--font-mono); font-weight:700; font-size:15px; color:var(--gold); }
-.modal-stats .mk{ font-size:9.5px; color:var(--muted-2); text-transform:uppercase; margin-top:3px; letter-spacing:0.5px; }
+.modal-stats .mk{ font-size:9.5px; color:var(--muted); text-transform:uppercase; margin-top:3px; letter-spacing:0.5px; }
 .modal-stats .stat-group-label{
   background:none; padding:2px 2px 0; text-align:left;
   border-radius:0; font-size:10px; letter-spacing:0.5px;
@@ -424,6 +430,12 @@ footer a{ color:var(--gold-dim); text-decoration:none; }
   .page-head h2{ font-size:26px; }
   .stat-box{ display:none; }
   .brand-row{ align-items:flex-start; }
+  /* Tabs overflow off-screen on narrow widths with no other signal that
+     more exist -- fade the right edge so the next tab always peeks in. */
+  nav.tabs{
+    -webkit-mask-image:linear-gradient(to right, #000 calc(100% - 28px), transparent 100%);
+    mask-image:linear-gradient(to right, #000 calc(100% - 28px), transparent 100%);
+  }
 }
 </style>
 </head>
@@ -503,7 +515,7 @@ footer a{ color:var(--gold-dim); text-decoration:none; }
     <div class="page-head">
       <div>
         <h2>Prospects <span class="accent">by Team</span></h2>
-        <p class="desc">All 500 ranked prospects grouped by organization. Click a team to expand its farm system.</p>
+        <p class="desc">Ranked prospects grouped by organization. Click a team to expand its farm system.</p>
       </div>
     </div>
     <div class="controls">
@@ -546,8 +558,8 @@ footer a{ color:var(--gold-dim); text-decoration:none; }
 </main>
 
 <div class="modal-backdrop" id="modal">
-  <div class="modal">
-    <button class="close" id="modal-close">&times;</button>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-name">
+    <button class="close" id="modal-close" aria-label="Close">&times;</button>
     <div class="modal-head">
       <div class="headshot-wrap" id="modal-photo"></div>
       <div>
@@ -587,6 +599,12 @@ function isPitcher(pos){
   if(!pos) return false;
   const p = pos.toUpperCase();
   return p.includes('SP') || p.includes('RP') || p==='P';
+}
+// Position strings can carry multi-position eligibility ("SS/OF", "2B/SS") --
+// split into individual positions so a filter can match any of them, rather
+// than only exact-matching the whole combo string.
+function posEligible(pos){
+  return (pos||'').split('/').map(s=>s.trim()).filter(Boolean);
 }
 function debounce(fn, ms){
   let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); };
@@ -765,7 +783,7 @@ function playerCard(p, opts){
   const posDisplay = p.pos || '';
   const mlbStart = p.mlbStart ? `MLB ${p.mlbStart}` : '';
   return `
-  <div class="card js-card" data-name="${escapeHtml(p.name)}" data-pos="${escapeHtml(posDisplay)}" data-id="${p._idx}">
+  <div class="card js-card" role="button" tabindex="0" aria-label="View details for ${escapeHtml(p.name)}" data-name="${escapeHtml(p.name)}" data-pos="${escapeHtml(posDisplay)}" data-id="${p._idx}">
     <div class="teamstripe" style="background:linear-gradient(180deg, ${tm.c1}, ${tm.c2});"></div>
     <div class="card-body">
       <div class="rank-badge${rankTop10}">${p.rank ?? '-'}</div>
@@ -774,7 +792,7 @@ function playerCard(p, opts){
         <span class="initials js-initials">${initials(p.name)}</span>
       </div>
       <div class="player-main">
-        <div class="player-name">${escapeHtml(p.name)}</div>
+        <div class="player-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</div>
         <div class="player-meta">
           <span class="pos-tag">${escapeHtml(posDisplay)}</span>
           <span class="team-tag" style="color:${tm.c2==='#000000'?tm.c1:tm.c2}">${escapeHtml(p.team||'')}</span>
@@ -794,7 +812,7 @@ function mountLazy(container){
 
 /* ============ TOP 500 PAGE ============ */
 TOP500.forEach((p,i)=> p._idx = 't500-'+i);
-const t500PosSet = [...new Set(TOP500.map(p=>p.pos).filter(Boolean))].sort();
+const t500PosSet = [...new Set(TOP500.flatMap(p=>posEligible(p.pos)))].sort();
 const t500TeamSet = [...new Set(TOP500.map(p=>p.team).filter(Boolean))].sort();
 document.getElementById('t500-pos').innerHTML += t500PosSet.map(p=>`<option value="${p}">${p}</option>`).join('');
 document.getElementById('t500-team').innerHTML += t500TeamSet.map(t=>`<option value="${t}">${t}</option>`).join('');
@@ -805,7 +823,7 @@ function renderTop500(){
   const team = document.getElementById('t500-team').value;
   const sort = document.getElementById('t500-sort').value;
   let list = TOP500.filter(p=>{
-    if(pos && p.pos!==pos) return false;
+    if(pos && !posEligible(p.pos).includes(pos)) return false;
     if(team && p.team!==team) return false;
     if(q && !(p.name.toLowerCase().includes(q) || (p.team||'').toLowerCase().includes(q))) return false;
     return true;
@@ -833,7 +851,7 @@ renderTop500();
 
 /* ============ DYNASTY PAGE ============ */
 DYNASTY.forEach((p,i)=> p._idx = 'dyn-'+i);
-const dynPosSet = [...new Set(DYNASTY.map(p=>p.pos).filter(Boolean))].sort();
+const dynPosSet = [...new Set(DYNASTY.flatMap(p=>posEligible(p.pos)))].sort();
 const dynTeamSet = [...new Set(DYNASTY.map(p=>p.team).filter(Boolean))].sort();
 document.getElementById('dyn-pos').innerHTML += dynPosSet.map(p=>`<option value="${p}">${p}</option>`).join('');
 document.getElementById('dyn-team').innerHTML += dynTeamSet.map(t=>`<option value="${t}">${t}</option>`).join('');
@@ -844,7 +862,7 @@ function renderDynasty(){
   const team = document.getElementById('dyn-team').value;
   const sort = document.getElementById('dyn-sort').value;
   let list = DYNASTY.filter(p=>{
-    if(pos && p.pos!==pos) return false;
+    if(pos && !posEligible(p.pos).includes(pos)) return false;
     if(team && p.team!==team) return false;
     if(q && !(p.name.toLowerCase().includes(q) || (p.team||'').toLowerCase().includes(q))) return false;
     return true;
@@ -868,21 +886,21 @@ renderDynasty();
 /* ============ BY TEAM PAGE ============ */
 function renderTeamGroups(filterQ){
   const container = document.getElementById('team-groups');
-  const teamCodes = Object.keys(BYTEAM).sort((a,b)=> BYTEAM[a].orgName.localeCompare(BYTEAM[b].orgName));
+  const teamCodes = Object.keys(BYTEAM).sort((a,b)=> teamMeta(a).name.localeCompare(teamMeta(b).name));
   let totalShown = 0;
   let html = '';
   teamCodes.forEach(code=>{
     const org = BYTEAM[code];
+    const tm = teamMeta(code);
     let players = org.players;
     if(filterQ){
-      players = players.filter(p=> p.name.toLowerCase().includes(filterQ) || org.orgName.toLowerCase().includes(filterQ));
+      players = players.filter(p=> p.name.toLowerCase().includes(filterQ) || tm.name.toLowerCase().includes(filterQ));
     }
     if(!players.length) return;
     totalShown += players.length;
-    const tm = teamMeta(code);
     html += `<div class="group" data-code="${code}">
       <div class="group-head" style="border-left-color:${tm.c1}">
-        <span class="gname">${escapeHtml(org.orgName)}</span>
+        <span class="gname">${escapeHtml(tm.name)}</span>
         <span class="gcount">${players.length} ranked</span>
         <span class="chev">&#9656;</span>
       </div>
@@ -1008,7 +1026,7 @@ function renderFypd(filterQ){
             <span class="pick-num">#${p.overall}</span>
             <div class="pick-info">
               <div class="pname">${escapeHtml(p.name)}</div>
-              <div class="pmeta" style="color:#ffffff">${escapeHtml(p.team||'')} &middot; ${escapeHtml(p.pos||'')}</div>
+              <div class="pmeta" style="color:var(--chalk)">${escapeHtml(p.team||'')} &middot; ${escapeHtml(p.pos||'')}</div>
             </div>
           </div>`;
         }).join('')}
@@ -1034,16 +1052,40 @@ document.getElementById('tabs').addEventListener('click', e=>{
 
 /* ============ MODAL (player detail on click) ============ */
 const modal = document.getElementById('modal');
-document.getElementById('modal-close').addEventListener('click', ()=> modal.classList.remove('show'));
-modal.addEventListener('click', e=>{ if(e.target===modal) modal.classList.remove('show'); });
+const modalDialog = modal.querySelector('.modal');
+let modalTriggerEl = null;
+
+function closeModal(){
+  modal.classList.remove('show');
+  if(modalTriggerEl){ modalTriggerEl.focus(); modalTriggerEl = null; }
+}
+document.getElementById('modal-close').addEventListener('click', closeModal);
+modal.addEventListener('click', e=>{ if(e.target===modal) closeModal(); });
+document.addEventListener('keydown', e=>{
+  if(!modal.classList.contains('show')) return;
+  if(e.key==='Escape'){ closeModal(); return; }
+  if(e.key==='Tab'){
+    // Simple focus trap: cycle Tab/Shift+Tab within the dialog's focusable elements.
+    const focusable = modalDialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if(!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length-1];
+    if(e.shiftKey && document.activeElement===first){ e.preventDefault(); last.focus(); }
+    else if(!e.shiftKey && document.activeElement===last){ e.preventDefault(); first.focus(); }
+  }
+});
 
 function bindCardClicks(container, sourceList){
   container.querySelectorAll('.js-card').forEach(el=>{
-    el.addEventListener('click', async ()=>{
+    const activate = ()=>{
       const idx = el.dataset.id;
       const p = sourceList.find(x=>x._idx===idx);
       if(!p) return;
+      modalTriggerEl = el;
       openModal(p);
+    };
+    el.addEventListener('click', activate);
+    el.addEventListener('keydown', e=>{
+      if(e.key==='Enter' || e.key===' '){ e.preventDefault(); activate(); }
     });
   });
 }
@@ -1059,6 +1101,7 @@ async function openModal(p){
   document.getElementById('modal-stats').innerHTML = '<div class="stat-loading" style="grid-column:1/-1;text-align:center;">Loading stats&hellip;</div>';
   document.getElementById('modal-legend').textContent = '';
   modal.classList.add('show');
+  document.getElementById('modal-close').focus();
 
   await statsReady;
   const row = STATS.get(p.name);

@@ -734,22 +734,33 @@ function statRow(k,v){
 }
 
 /* ============ CARD RENDERING ============ */
+// Some rows in the source workbook have a corrupted "change since season
+// start" value (confirmed against the raw file: a handful of rank-change
+// cells contain values in the 1400-2100 range, while every real value in
+// the dataset tops out around 250) -- almost certainly a broken formula
+// reference in the spreadsheet. Rather than guess a "corrected" number,
+// suppress the indicator entirely when it's implausible.
+const MAX_PLAUSIBLE_RANK_MOVE = 300;
+function moveIndicatorHtml(diff){
+  if(Math.abs(diff) > MAX_PLAUSIBLE_RANK_MOVE) return '';
+  if(diff>0) return `<div class="move"><span class="up">&#9650; ${diff} since season start</span></div>`;
+  if(diff<0) return `<div class="move"><span class="down">&#9660; ${Math.abs(diff)} since season start</span></div>`;
+  return `<div class="move"><span>&#9679; unchanged</span></div>`;
+}
+
 function playerCard(p, opts){
   opts = opts || {};
   const tm = teamMeta(p.team);
   const rankTop10 = p.rank && p.rank<=10 ? ' top10' : '';
   let moveHtml = '';
+  // rankSeasonStart/changeSeason are already signed change-deltas in the
+  // source data (confirmed against the raw workbook), not absolute ranks --
+  // do not subtract p.rank from them again.
   if(opts.showMove && p.rankSeasonStart!=null){
-    const diff = p.rankSeasonStart - p.rank;
-    if(diff>0) moveHtml = `<div class="move"><span class="up">&#9650; ${diff} since season start</span></div>`;
-    else if(diff<0) moveHtml = `<div class="move"><span class="down">&#9660; ${Math.abs(diff)} since season start</span></div>`;
-    else moveHtml = `<div class="move"><span>&#9679; unchanged</span></div>`;
+    moveHtml = moveIndicatorHtml(p.rankSeasonStart);
   }
   if(opts.showDynastyMove && p.changeSeason!=null){
-    const diff = p.changeSeason;
-    if(diff>0) moveHtml = `<div class="move"><span class="up">&#9650; ${diff} since season start</span></div>`;
-    else if(diff<0) moveHtml = `<div class="move"><span class="down">&#9660; ${Math.abs(diff)} since season start</span></div>`;
-    else moveHtml = `<div class="move"><span>&#9679; unchanged</span></div>`;
+    moveHtml = moveIndicatorHtml(p.changeSeason);
   }
   const posDisplay = p.pos || '';
   const mlbStart = p.mlbStart ? `MLB ${p.mlbStart}` : '';

@@ -425,7 +425,7 @@ footer a{ color:var(--gold-dim); text-decoration:none; }
           <div class="sub">Fantasy Baseball Rankings &middot; July 2026</div>
         </div>
       </div>
-      <div class="asof">Live headshots &amp; stats via <b>MLB Stats API</b><br>Rankings imported from source workbook</div>
+      <div class="asof" id="asof">Headshots &amp; stats via <b>MLB Stats API</b><br>Rankings imported from source workbook</div>
     </div>
     <nav class="tabs" id="tabs">
       <button data-page="top500" class="active"><span class="n">01</span>Top 500 Prospects</button>
@@ -547,7 +547,7 @@ footer a{ color:var(--gold-dim); text-decoration:none; }
 </div>
 
 <footer>
-  Player headshots &amp; season stats fetched live from the public MLB Stats API where a match is found &middot; data may be incomplete for players not yet on an affiliated roster feed.
+  Player headshots &amp; season stats sourced from the public MLB Stats API, refreshed weekly, where a match is found &middot; data may be incomplete for players not yet on an affiliated roster feed.
 </footer>
 
 <script>
@@ -581,68 +581,45 @@ function escapeHtml(s){
   return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-/* ============ MLB STATS API (client-side, live) ============ */
-const idCache = new Map();      // name -> id or null
-const statCache = new Map();    // id -> {hitting, pitching} or null
-const inFlight = new Set();
+/* ============ MLB STATS SNAPSHOT (weekly, pre-fetched by scripts/update_stats.py) ============ */
+const STATS = new Map(); // name -> csv row
 
-async function fetchPlayerId(name){
-  if(idCache.has(name)) return idCache.get(name);
-  try{
-    const url = 'https://statsapi.mlb.com/api/v1/people/search?names=' + encodeURIComponent(name);
-    const res = await fetch(url);
-    if(!res.ok) throw new Error('bad response');
-    const data = await res.json();
-    const people = data.people || [];
-    let match = people.find(p => p.fullName && p.fullName.toLowerCase() === name.toLowerCase());
-    if(!match) match = people[0];
-    const id = match ? match.id : null;
-    idCache.set(name, id);
-    return id;
-  }catch(e){
-    idCache.set(name, null);
-    return null;
-  }
+function parseStatsCsv(text){
+  const lines = text.trim().split('\n');
+  const headers = lines[0].split(',');
+  lines.slice(1).forEach(line=>{
+    const cells = line.split(',');
+    const row = {};
+    headers.forEach((h,i)=> row[h]=cells[i]??'');
+    if(row.name) STATS.set(row.name, row);
+  });
 }
 
-async function fetchPlayerStats(id){
-  if(statCache.has(id)) return statCache.get(id);
-  try{
-    const seasons = [2026, 2025];
-    let hitting=null, pitching=null;
-    for(const season of seasons){
-      if(!hitting){
-        const r = await fetch(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=season&group=hitting&season=${season}`);
-        const d = await r.json();
-        const splits = d.stats && d.stats[0] && d.stats[0].splits;
-        if(splits && splits.length) hitting = splits[splits.length-1].stat;
-      }
-      if(!pitching){
-        const r2 = await fetch(`https://statsapi.mlb.com/api/v1/people/${id}/stats?stats=season&group=pitching&season=${season}`);
-        const d2 = await r2.json();
-        const splits2 = d2.stats && d2.stats[0] && d2.stats[0].splits;
-        if(splits2 && splits2.length) pitching = splits2[splits2.length-1].stat;
-      }
-      if(hitting || pitching) break;
-    }
-    const result = {hitting, pitching};
-    statCache.set(id, result);
-    return result;
-  }catch(e){
-    statCache.set(id, null);
-    return null;
+const statsReady = fetch('data/stats-snapshot.csv')
+  .then(r=> r.ok ? r.text() : Promise.reject(new Error('bad response')))
+  .then(parseStatsCsv)
+  .catch(e=> console.warn('Could not load stats snapshot', e));
+
+fetch('data/meta.json').then(r=>r.ok?r.json():null).then(meta=>{
+  if(meta && meta.generated_at){
+    const d = new Date(meta.generated_at);
+    const label = d.toLocaleDateString(undefined, {year:'numeric', month:'short', day:'numeric'});
+    document.getElementById('asof').innerHTML = `Headshots &amp; stats via <b>MLB Stats API</b> &middot; updated ${label}<br>Rankings imported from source workbook`;
   }
+}).catch(()=>{});
+
+function rowToStats(row){
+  const hitting = row.h_avg ? {avg:row.h_avg, homeRuns:row.h_hr, rbi:row.h_rbi, runs:row.h_r, stolenBases:row.h_sb} : null;
+  const pitching = row.p_era ? {wins:row.p_w, era:row.p_era, whip:row.p_whip, strikeOuts:row.p_k, inningsPitched:row.p_ip} : null;
+  return {hitting, pitching};
 }
 
-async function fetchHeadshot(imgEl, name, initialsEl){
-  const id = await fetchPlayerId(name);
-  if(id){
-    const url = `https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_auto:best,f_auto/v1/people/${id}/headshot/67/current`;
-    imgEl.onerror = () => { imgEl.style.display='none'; if(initialsEl) initialsEl.style.display='flex'; };
-    imgEl.onload = () => { imgEl.style.display='block'; if(initialsEl) initialsEl.style.display='none'; };
-    imgEl.src = url;
-  }
-  return id;
+function applyHeadshot(imgEl, initialsEl, id){
+  if(!id) return;
+  const url = `https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_auto:best,f_auto/v1/people/${id}/headshot/67/current`;
+  imgEl.onerror = () => { imgEl.style.display='none'; if(initialsEl) initialsEl.style.display='flex'; };
+  imgEl.onload = () => { imgEl.style.display='block'; if(initialsEl) initialsEl.style.display='none'; };
+  imgEl.src = url;
 }
 
 /* Lazy loading via IntersectionObserver */
@@ -663,14 +640,15 @@ async function loadCardData(el){
   const ini = el.querySelector('.js-initials');
   const statBox = el.querySelector('.js-statbox');
 
-  const id = await fetchHeadshot(img, name, ini);
-  if(!id){
+  await statsReady;
+  const row = STATS.get(name);
+  if(!row || !row.mlb_id){
     if(statBox) statBox.innerHTML = '<div class="stat-empty">No MLB Stats API match</div>';
     return;
   }
+  applyHeadshot(img, ini, row.mlb_id);
   if(!statBox) return;
-  const stats = await fetchPlayerStats(id);
-  renderStatBox(statBox, stats, pos);
+  renderStatBox(statBox, rowToStats(row), pos);
 }
 
 function renderStatBox(el, stats, pos){
@@ -869,13 +847,18 @@ const rowLazyObserver = new IntersectionObserver((entries)=>{
     if(entry.isIntersecting){
       const el = entry.target;
       rowLazyObserver.unobserve(el);
-      const name = el.dataset.name;
-      const img = el.querySelector('.js-img');
-      const ini = el.querySelector('.js-initials');
-      fetchHeadshot(img, name, ini);
+      loadRowPhoto(el);
     }
   });
 }, {rootMargin:'150px'});
+async function loadRowPhoto(el){
+  const name = el.dataset.name;
+  const img = el.querySelector('.js-img');
+  const ini = el.querySelector('.js-initials');
+  await statsReady;
+  const row = STATS.get(name);
+  if(row && row.mlb_id) applyHeadshot(img, ini, row.mlb_id);
+}
 function mountLazyRows(container){
   container.querySelectorAll('.js-row').forEach(el=>rowLazyObserver.observe(el));
 }
@@ -1004,16 +987,18 @@ async function openModal(p){
   photoWrap.innerHTML = `<img class="js-img" style="display:none;" alt=""><span class="initials js-initials">${initials(p.name)}</span>`;
   const img = photoWrap.querySelector('.js-img');
   const ini = photoWrap.querySelector('.js-initials');
-  document.getElementById('modal-stats').innerHTML = '<div class="stat-loading" style="grid-column:1/-1;text-align:center;">Loading live stats from MLB Stats API&hellip;</div>';
+  document.getElementById('modal-stats').innerHTML = '<div class="stat-loading" style="grid-column:1/-1;text-align:center;">Loading stats&hellip;</div>';
   document.getElementById('modal-legend').textContent = '';
   modal.classList.add('show');
 
-  const id = await fetchHeadshot(img, p.name, ini);
-  if(!id){
+  await statsReady;
+  const row = STATS.get(p.name);
+  if(!row || !row.mlb_id){
     document.getElementById('modal-stats').innerHTML = '<div class="stat-empty" style="grid-column:1/-1;text-align:center;">No MLB Stats API match found for this player.</div>';
     return;
   }
-  const stats = await fetchPlayerStats(id);
+  applyHeadshot(img, ini, row.mlb_id);
+  const stats = rowToStats(row);
   const statsEl = document.getElementById('modal-stats');
   if(!stats || (!stats.hitting && !stats.pitching)){
     statsEl.innerHTML = '<div class="stat-empty" style="grid-column:1/-1;text-align:center;">No 2025/2026 season stats on file yet.</div>';

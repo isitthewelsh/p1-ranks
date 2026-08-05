@@ -618,12 +618,31 @@ function rowToStats(row){
   return {hitting, pitching};
 }
 
+// Crop variants to try in order. "67" is MLB's standard studio headshot crop
+// and covers most rostered MLB players, but doesn't exist for many minor
+// leaguers -- "milb" and "silo" are separate crops that fill in a large
+// share of those (confirmed: distinct real photos per player, not a shared
+// placeholder graphic).
+const HEADSHOT_VARIANTS = ['67', 'milb', 'silo'];
+
+function headshotUrl(id, variant){
+  return `https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_auto:best,f_auto/v1/people/${id}/headshot/${variant}/current`;
+}
+
 function applyHeadshot(imgEl, initialsEl, id){
   if(!id) return;
-  const url = `https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_auto:best,f_auto/v1/people/${id}/headshot/67/current`;
-  imgEl.onerror = () => { imgEl.style.display='none'; if(initialsEl) initialsEl.style.display='flex'; };
+  let variantIndex = 0;
+  imgEl.onerror = () => {
+    variantIndex++;
+    if(variantIndex < HEADSHOT_VARIANTS.length){
+      imgEl.src = headshotUrl(id, HEADSHOT_VARIANTS[variantIndex]);
+    } else {
+      imgEl.style.display='none';
+      if(initialsEl) initialsEl.style.display='flex';
+    }
+  };
   imgEl.onload = () => { imgEl.style.display='block'; if(initialsEl) initialsEl.style.display='none'; };
-  imgEl.src = url;
+  imgEl.src = headshotUrl(id, HEADSHOT_VARIANTS[0]);
 }
 
 /* Lazy loading via IntersectionObserver */

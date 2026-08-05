@@ -589,7 +589,7 @@ function escapeHtml(s){
 const STATS = new Map(); // name -> csv row
 
 function parseStatsCsv(text){
-  const lines = text.trim().split('\n');
+  const lines = text.trim().split('\n').map(l=>l.replace(/\r$/,''));
   const headers = lines[0].split(',');
   lines.slice(1).forEach(line=>{
     const cells = line.split(',');

@@ -292,6 +292,11 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
   font-size:9px; letter-spacing:0.5px; text-transform:uppercase;
   color:var(--gold); font-weight:700; margin-bottom:2px;
 }
+.stat-group-label{
+  font-size:9px; letter-spacing:0.5px; text-transform:uppercase;
+  color:var(--muted-2); font-weight:700; margin-top:4px;
+}
+.stat-group-label:first-of-type{ margin-top:0; }
 .stat-loading{ font-size:10px; color:var(--muted-2); font-style:italic; }
 .stat-empty{ font-size:10px; color:var(--muted-2); }
 
@@ -394,6 +399,11 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
 .modal-stats div{ text-align:center; background:var(--bg-alt); border-radius:8px; padding:10px 4px; }
 .modal-stats .mv{ font-family:var(--font-mono); font-weight:700; font-size:15px; color:var(--gold); }
 .modal-stats .mk{ font-size:9.5px; color:var(--muted-2); text-transform:uppercase; margin-top:3px; letter-spacing:0.5px; }
+.modal-stats .stat-group-label{
+  background:none; padding:2px 2px 0; text-align:left;
+  border-radius:0; font-size:10px; letter-spacing:0.5px;
+}
+.modal-stats .stat-group-label:first-child{ padding-top:0; }
 
 /* ---------- MISC ---------- */
 .legend{
@@ -618,6 +628,17 @@ function rowToStats(row){
   return {hitting, pitching};
 }
 
+// True two-way production (Shohei Ohtani), not the common case of a
+// reliever with one token plate appearance or a position player who
+// pitched an inning of mop-up duty in a blowout -- both show up in the
+// data as technically having "hitting and pitching" stats otherwise.
+function isTwoWayPlayer(stats){
+  if(!stats.hitting || !stats.pitching) return false;
+  const ip = parseFloat(stats.pitching.inningsPitched);
+  const hittingIsReal = stats.hitting.avg && stats.hitting.avg !== '.000';
+  return ip >= 20 && hittingIsReal;
+}
+
 // Crop variants to try in order. "67" is MLB's standard studio headshot crop
 // and covers most rostered MLB players, but doesn't exist for many minor
 // leaguers -- "milb" and "silo" are separate crops that fill in a large
@@ -680,6 +701,17 @@ function renderStatBox(el, stats, pos, level){
     return;
   }
   const levelTag = level && level!=='MLB' ? `<div class="stat-level">${level}</div>` : '';
+  if(isTwoWayPlayer(stats)){
+    // Two-way player (e.g. Shohei Ohtani) -- show both lines instead of
+    // picking one based on listed position.
+    const h = stats.hitting, p = stats.pitching;
+    el.innerHTML = levelTag
+      + '<div class="stat-group-label">Pitching</div>'
+      + statRow('W', p.wins ?? '-') + statRow('ERA', p.era ?? '-') + statRow('WHIP', p.whip ?? '-') + statRow('K', p.strikeOuts ?? '-')
+      + '<div class="stat-group-label">Hitting</div>'
+      + statRow('AVG', h.avg ?? '-') + statRow('HR', h.homeRuns ?? '-') + statRow('RBI', h.rbi ?? '-') + statRow('R', h.runs ?? '-') + statRow('SB', h.stolenBases ?? '-');
+    return;
+  }
   const pitcherPref = isPitcher(pos);
   const useP = pitcherPref ? (stats.pitching || stats.hitting) : null;
   if(pitcherPref && stats.pitching){
@@ -1028,19 +1060,31 @@ async function openModal(p){
     statsEl.innerHTML = '<div class="stat-empty" style="grid-column:1/-1;text-align:center;">No 2025/2026 season stats on file yet.</div>';
     return;
   }
-  const pitcherPref = isPitcher(p.pos);
-  let cells = [];
-  if(pitcherPref && stats.pitching){
-    const s = stats.pitching;
-    cells = [['W',s.wins],['ERA',s.era],['WHIP',s.whip],['K',s.strikeOuts],['IP',s.inningsPitched]];
-  } else if(stats.hitting){
-    const s = stats.hitting;
-    cells = [['AVG',s.avg],['HR',s.homeRuns],['RBI',s.rbi],['R',s.runs],['SB',s.stolenBases]];
-  } else if(stats.pitching){
-    const s = stats.pitching;
-    cells = [['W',s.wins],['ERA',s.era],['WHIP',s.whip],['K',s.strikeOuts],['IP',s.inningsPitched]];
+  const cellHtml = ([k,v])=>`<div><div class="mv">${v ?? '-'}</div><div class="mk">${k}</div></div>`;
+  const groupLabelHtml = (label)=>`<div class="stat-group-label" style="grid-column:1/-1;">${label}</div>`;
+  if(isTwoWayPlayer(stats)){
+    // Two-way player (e.g. Shohei Ohtani) -- show both lines instead of
+    // picking one based on listed position.
+    const p2 = stats.pitching, h = stats.hitting;
+    const pCells = [['W',p2.wins],['ERA',p2.era],['WHIP',p2.whip],['K',p2.strikeOuts],['IP',p2.inningsPitched]];
+    const hCells = [['AVG',h.avg],['HR',h.homeRuns],['RBI',h.rbi],['R',h.runs],['SB',h.stolenBases]];
+    statsEl.innerHTML = groupLabelHtml('Pitching') + pCells.map(cellHtml).join('')
+      + groupLabelHtml('Hitting') + hCells.map(cellHtml).join('');
+  } else {
+    const pitcherPref = isPitcher(p.pos);
+    let cells = [];
+    if(pitcherPref && stats.pitching){
+      const s = stats.pitching;
+      cells = [['W',s.wins],['ERA',s.era],['WHIP',s.whip],['K',s.strikeOuts],['IP',s.inningsPitched]];
+    } else if(stats.hitting){
+      const s = stats.hitting;
+      cells = [['AVG',s.avg],['HR',s.homeRuns],['RBI',s.rbi],['R',s.runs],['SB',s.stolenBases]];
+    } else if(stats.pitching){
+      const s = stats.pitching;
+      cells = [['W',s.wins],['ERA',s.era],['WHIP',s.whip],['K',s.strikeOuts],['IP',s.inningsPitched]];
+    }
+    statsEl.innerHTML = cells.map(cellHtml).join('');
   }
-  statsEl.innerHTML = cells.map(([k,v])=>`<div><div class="mv">${v ?? '-'}</div><div class="mk">${k}</div></div>`).join('');
   const levelNames = {MLB:'MLB', AAA:'Triple-A', AA:'Double-A', 'A+':'High-A', A:'Single-A', ROK:'Rookie'};
   const levelName = levelNames[row.level] || row.level;
   document.getElementById('modal-legend').textContent = `${row.season} ${levelName} stats · most recent level with a recorded season.`;

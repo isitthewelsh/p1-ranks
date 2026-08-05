@@ -56,15 +56,32 @@ LEVELS_TO_TRY = [
     (16, "ROK"),
 ]
 DRAFT_YEARS_TO_INDEX = range(2019, 2026)
+# MLB + every affiliated minor-league level, for building a roster-based
+# name index -- far more complete than name search for current players.
+ROSTER_SPORT_IDS = [1, 11, 12, 13, 14, 16]
+ROSTER_SEASON = 2026
 AGE_MATCH_TOLERANCE_YEARS = 5
 MAX_WORKERS = 16
 REQUEST_TIMEOUT = 10
 
 
+NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv", "v"}
+
+
 def normalize_name(s):
-    """Lowercase and strip diacritics, so 'Pena' == 'Pena'."""
+    """Lowercase, strip diacritics ('Pena' == 'Pena'), drop periods from
+    initials ('J.D. Dix' == 'JD Dix', which is how MLB's own records store
+    it), and drop a trailing generational suffix (our source data has
+    "Eric Booth Jr", MLB has "Eric Booth") -- any of these otherwise breaks
+    both the search query and the exact-name comparison."""
     nfkd = unicodedata.normalize("NFKD", s or "")
-    return "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
+    stripped = "".join(c for c in nfkd if not unicodedata.combining(c))
+    stripped = stripped.replace(".", "")
+    stripped = re.sub(r"\s+", " ", stripped).lower().strip()
+    parts = stripped.split()
+    if len(parts) > 1 and parts[-1] in NAME_SUFFIXES:
+        parts = parts[:-1]
+    return " ".join(parts)
 
 
 def age_from_birthdate(birth_date_str):
@@ -106,6 +123,50 @@ def load_id_overrides():
         return {}
     data = json.loads(ID_OVERRIDES_FILE.read_text(encoding="utf-8"))
     return {k: v for k, v in data.items() if not k.startswith("_")}
+
+
+def fetch_team_ids(session, sport_id):
+    try:
+        r = session.get(f"https://statsapi.mlb.com/api/v1/teams?sportId={sport_id}", timeout=15)
+        r.raise_for_status()
+        return [t["id"] for t in r.json().get("teams", [])]
+    except Exception:
+        return []
+
+
+def fetch_team_roster(session, team_id):
+    url = (f"https://statsapi.mlb.com/api/v1/teams/{team_id}/roster"
+           f"?rosterType=fullSeason&season={ROSTER_SEASON}&hydrate=person(birthDate)")
+    try:
+        r = session.get(url, timeout=15)
+        r.raise_for_status()
+        return r.json().get("roster", [])
+    except Exception:
+        return []
+
+
+def build_roster_index(session):
+    """normalized full name -> list of (id, birthDate), across every MLB +
+    affiliated minor-league roster. Far more reliable than name search for
+    currently-active players, since the search index visibly lags for some
+    recently-added prospects (see module docstring)."""
+    team_ids = []
+    for sport_id in ROSTER_SPORT_IDS:
+        team_ids += fetch_team_ids(session, sport_id)
+
+    index = {}
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        futures = [pool.submit(fetch_team_roster, session, tid) for tid in team_ids]
+        for future in as_completed(futures):
+            for entry in future.result():
+                person = entry.get("person") or {}
+                pid = person.get("id")
+                full_name = person.get("fullName")
+                if not pid or not full_name:
+                    continue
+                key = normalize_name(full_name)
+                index.setdefault(key, []).append((pid, person.get("birthDate")))
+    return index
 
 
 def build_draft_index(session):
@@ -168,52 +229,65 @@ def search_people(session, query):
         return []
 
 
-def fetch_player_id(session, name, age_hint, overrides, draft_index):
+def _plausible_first_name(query_first, candidate_first):
+    if not query_first or not candidate_first:
+        return False
+    return (
+        candidate_first == query_first
+        or candidate_first.startswith(query_first)
+        or query_first.startswith(candidate_first)
+    )
+
+
+def fetch_player_id(session, name, age_hint, overrides, draft_index, roster_index):
     if name in overrides:
         return overrides[name]
 
     normalized_query = normalize_name(name)
+    query_parts = normalized_query.split()
+    query_first = query_parts[0] if query_parts else ""
+    query_last = query_parts[-1] if query_parts else ""
 
-    people = search_people(session, name)
-    exact = [(p["id"], p.get("birthDate")) for p in people
-             if normalize_name(p.get("fullName", "")) == normalized_query]
+    # Merge exact-name candidates from every source: roster (most reliable --
+    # every affiliated MLB + minor-league team's current-season roster), the
+    # draft-pick index (catches recent draftees search hasn't indexed yet),
+    # and name search itself.
+    people = search_people(session, name.replace(".", ""))
+    exact = list(roster_index.get(normalized_query, []))
+    exact += draft_index.get(normalized_query, [])
+    exact += [(p["id"], p.get("birthDate")) for p in people
+              if normalize_name(p.get("fullName", "")) == normalized_query]
     result = pick_best_candidate(exact, age_hint)
     if result:
         return result
 
-    # Fall back to a last-name-only search, disambiguated by age -- catches
-    # nickname mismatches (e.g. "Josh" vs "Joshua") and cases where the
-    # full-name query doesn't surface the right person at all. Still requires
-    # the first name to at least plausibly match (prefix either direction) --
-    # last name alone isn't enough, or e.g. "Luis Hernandez" can silently
-    # match an unrelated "Miguel Hernandez" just for being closest in age.
-    query_parts = normalized_query.split()
-    last_name = name.strip().split()[-1]
-    query_first = query_parts[0] if query_parts else ""
-    if last_name.lower() != name.strip().lower():
-        people2 = search_people(session, last_name)
-        normalized_last = normalize_name(last_name)
+    # Fall back to last-name-only matching across the same sources,
+    # disambiguated by age -- catches nickname mismatches (e.g. "Josh" vs
+    # "Joshua") and cases the exact-name pass didn't surface at all. Still
+    # requires the first name to at least plausibly match (prefix either
+    # direction) -- last name alone isn't enough, or e.g. "Luis Hernandez"
+    # can silently match an unrelated "Miguel Hernandez" of similar age.
+    if query_last and query_last != normalized_query:
         same_last = []
+        for key, candidates in roster_index.items():
+            parts = key.split()
+            if parts and parts[-1] == query_last and _plausible_first_name(query_first, parts[0]):
+                same_last += candidates
+        for key, candidates in draft_index.items():
+            parts = key.split()
+            if parts and parts[-1] == query_last and _plausible_first_name(query_first, parts[0]):
+                same_last += candidates
+
+        people2 = search_people(session, query_last)
         for p in people2:
-            if normalize_name(p.get("lastName", "")) != normalized_last:
+            if normalize_name(p.get("lastName", "")) != query_last:
                 continue
-            candidate_first = normalize_name(p.get("firstName", ""))
-            if candidate_first and query_first and (
-                candidate_first == query_first
-                or candidate_first.startswith(query_first)
-                or query_first.startswith(candidate_first)
-            ):
+            if _plausible_first_name(query_first, normalize_name(p.get("firstName", ""))):
                 same_last.append((p["id"], p.get("birthDate")))
+
         result = pick_best_candidate(same_last, age_hint)
         if result:
             return result
-
-    # Fall back to the draft-pick index for players missing from search
-    # entirely (observed: very recent draftees the index hasn't caught up on).
-    draft_candidates = draft_index.get(normalized_query, [])
-    result = pick_best_candidate(draft_candidates, age_hint)
-    if result:
-        return result
 
     return None
 
@@ -234,8 +308,8 @@ def fetch_season_stat(session, player_id, group, season, sport_id):
     return None
 
 
-def fetch_player_row(session, name, age_hint, overrides, draft_index):
-    player_id = fetch_player_id(session, name, age_hint, overrides, draft_index)
+def fetch_player_row(session, name, age_hint, overrides, draft_index, roster_index):
+    player_id = fetch_player_id(session, name, age_hint, overrides, draft_index, roster_index)
     row = {
         "name": name,
         "mlb_id": player_id or "",
@@ -284,10 +358,14 @@ def main():
         draft_index = build_draft_index(session)
         print(f"  ...{len(draft_index)} drafted players indexed", file=sys.stderr)
 
+        print("Indexing every MLB + affiliated minor-league roster...", file=sys.stderr)
+        roster_index = build_roster_index(session)
+        print(f"  ...{len(roster_index)} rostered players indexed", file=sys.stderr)
+
         rows = []
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
             futures = {
-                pool.submit(fetch_player_row, session, name, age_hint, overrides, draft_index): name
+                pool.submit(fetch_player_row, session, name, age_hint, overrides, draft_index, roster_index): name
                 for name, age_hint in players.items()
             }
             done = 0

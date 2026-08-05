@@ -9,6 +9,20 @@ Checks MLB first, then falls back through affiliated minor-league levels
 haven't debuted yet still get their current-level stat line, since the MLB
 Stats API covers the full minor-league system under different sportIds.
 
+Player ID resolution has a few failure modes the naive "exact name match on
+the first search result" approach gets wrong, so fetch_player_id() layers
+several strategies:
+  1. data/id-overrides.json -- manual name -> id map for players confirmed
+     missing from MLB's search index entirely (checked via direct /people/{id}
+     lookup), e.g. very recent draftees the index hasn't caught up on yet.
+  2. Full-name search, matched with diacritics stripped (our source names are
+     plain ASCII; MLB's are properly accented, e.g. "Pena" vs "Pena").
+  3. If a name search returns multiple/no confident matches, disambiguate (or
+     retry with a last-name-only search) using age, since common names can
+     collide with unrelated retired players decades apart in age.
+  4. Cross-reference the MLB Draft API (which reliably links draft picks to
+     their person id) for players still unresolved after the above.
+
 Run weekly by .github/workflows/update-stats.yml. Can also be run manually:
     python3 scripts/update_stats.py
 """
@@ -16,8 +30,9 @@ import csv
 import json
 import re
 import sys
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -40,8 +55,27 @@ LEVELS_TO_TRY = [
     (14, "A"),
     (16, "ROK"),
 ]
+DRAFT_YEARS_TO_INDEX = range(2019, 2026)
+AGE_MATCH_TOLERANCE_YEARS = 5
 MAX_WORKERS = 16
 REQUEST_TIMEOUT = 10
+
+
+def normalize_name(s):
+    """Lowercase and strip diacritics, so 'Pena' == 'Pena'."""
+    nfkd = unicodedata.normalize("NFKD", s or "")
+    return "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
+
+
+def age_from_birthdate(birth_date_str):
+    if not birth_date_str:
+        return None
+    try:
+        y, m, d = (int(x) for x in birth_date_str.split("-"))
+    except ValueError:
+        return None
+    today = date.today()
+    return (today - date(y, m, d)).days / 365.25
 
 
 def extract_const_array(html_text, const_name):
@@ -52,13 +86,19 @@ def extract_const_array(html_text, const_name):
     return json.loads(match.group(1))
 
 
-def collect_player_names():
+def collect_players():
+    """Returns {name: age_hint_or_None}, deduped across TOP500 + DYNASTY."""
     html_text = INDEX_HTML.read_text(encoding="utf-8")
     top500 = extract_const_array(html_text, "TOP500")
     dynasty = extract_const_array(html_text, "DYNASTY")
-    names = {p["name"] for p in top500 if p.get("name")}
-    names |= {p["name"] for p in dynasty if p.get("name")}
-    return sorted(names)
+    players = {}
+    for p in top500 + dynasty:
+        name = p.get("name")
+        if not name:
+            continue
+        if name not in players or players[name] is None:
+            players[name] = p.get("age")
+    return players
 
 
 def load_id_overrides():
@@ -68,20 +108,114 @@ def load_id_overrides():
     return {k: v for k, v in data.items() if not k.startswith("_")}
 
 
-def fetch_player_id(session, name, overrides):
-    if name in overrides:
-        return overrides[name]
-    url = "https://statsapi.mlb.com/api/v1/people/search?names=" + quote(name)
+def build_draft_index(session):
+    """normalized full name -> list of (id, birthDate), across DRAFT_YEARS_TO_INDEX."""
+    index = {}
+    for year in DRAFT_YEARS_TO_INDEX:
+        try:
+            r = session.get(f"https://statsapi.mlb.com/api/v1/draft/{year}", timeout=30)
+            r.raise_for_status()
+            rounds = r.json().get("drafts", {}).get("rounds", [])
+        except Exception:
+            continue
+        for rnd in rounds:
+            for pick in rnd.get("picks", []):
+                person = pick.get("person") or {}
+                pid = person.get("id")
+                full_name = person.get("fullName")
+                if not pid or not full_name:
+                    continue
+                key = normalize_name(full_name)
+                index.setdefault(key, []).append((pid, person.get("birthDate")))
+    return index
+
+
+def pick_best_candidate(candidates, age_hint):
+    """candidates: list of (id, birthDate). Returns id or None.
+
+    Whenever an age hint is available, EVERY candidate must pass the age-
+    tolerance check -- including when there's only one candidate, since a
+    lone search result can still be an unrelated same-name player decades
+    apart in age (observed: a common name returning only a retired 1980s
+    player when the real prospect isn't indexed under that name at all).
+    Only trust an unverified single candidate when no age hint exists.
+    """
+    if not candidates:
+        return None
+    if age_hint is not None:
+        scored = []
+        for pid, birth_date in candidates:
+            candidate_age = age_from_birthdate(birth_date)
+            if candidate_age is None:
+                continue
+            diff = abs(candidate_age - age_hint)
+            if diff <= AGE_MATCH_TOLERANCE_YEARS:
+                scored.append((diff, pid))
+        if not scored:
+            return None
+        scored.sort(key=lambda x: x[0])
+        return scored[0][1]
+    return candidates[0][0] if len(candidates) == 1 else None
+
+
+def search_people(session, query):
+    url = "https://statsapi.mlb.com/api/v1/people/search?names=" + quote(query)
     try:
         r = session.get(url, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
-        people = r.json().get("people", [])
+        return r.json().get("people", [])
     except Exception:
-        return None
-    match = next((p for p in people if p.get("fullName", "").lower() == name.lower()), None)
-    if not match and people:
-        match = people[0]
-    return match["id"] if match else None
+        return []
+
+
+def fetch_player_id(session, name, age_hint, overrides, draft_index):
+    if name in overrides:
+        return overrides[name]
+
+    normalized_query = normalize_name(name)
+
+    people = search_people(session, name)
+    exact = [(p["id"], p.get("birthDate")) for p in people
+             if normalize_name(p.get("fullName", "")) == normalized_query]
+    result = pick_best_candidate(exact, age_hint)
+    if result:
+        return result
+
+    # Fall back to a last-name-only search, disambiguated by age -- catches
+    # nickname mismatches (e.g. "Josh" vs "Joshua") and cases where the
+    # full-name query doesn't surface the right person at all. Still requires
+    # the first name to at least plausibly match (prefix either direction) --
+    # last name alone isn't enough, or e.g. "Luis Hernandez" can silently
+    # match an unrelated "Miguel Hernandez" just for being closest in age.
+    query_parts = normalized_query.split()
+    last_name = name.strip().split()[-1]
+    query_first = query_parts[0] if query_parts else ""
+    if last_name.lower() != name.strip().lower():
+        people2 = search_people(session, last_name)
+        normalized_last = normalize_name(last_name)
+        same_last = []
+        for p in people2:
+            if normalize_name(p.get("lastName", "")) != normalized_last:
+                continue
+            candidate_first = normalize_name(p.get("firstName", ""))
+            if candidate_first and query_first and (
+                candidate_first == query_first
+                or candidate_first.startswith(query_first)
+                or query_first.startswith(candidate_first)
+            ):
+                same_last.append((p["id"], p.get("birthDate")))
+        result = pick_best_candidate(same_last, age_hint)
+        if result:
+            return result
+
+    # Fall back to the draft-pick index for players missing from search
+    # entirely (observed: very recent draftees the index hasn't caught up on).
+    draft_candidates = draft_index.get(normalized_query, [])
+    result = pick_best_candidate(draft_candidates, age_hint)
+    if result:
+        return result
+
+    return None
 
 
 def fetch_season_stat(session, player_id, group, season, sport_id):
@@ -100,8 +234,8 @@ def fetch_season_stat(session, player_id, group, season, sport_id):
     return None
 
 
-def fetch_player_row(session, name, overrides):
-    player_id = fetch_player_id(session, name, overrides)
+def fetch_player_row(session, name, age_hint, overrides, draft_index):
+    player_id = fetch_player_id(session, name, age_hint, overrides, draft_index)
     row = {
         "name": name,
         "mlb_id": player_id or "",
@@ -137,22 +271,31 @@ def fetch_player_row(session, name, overrides):
 
 
 def main():
-    names = collect_player_names()
+    players = collect_players()
     overrides = load_id_overrides()
-    print(f"Found {len(names)} unique players across TOP500 + DYNASTY "
+    print(f"Found {len(players)} unique players across TOP500 + DYNASTY "
           f"({len(overrides)} manual ID overrides loaded)", file=sys.stderr)
 
-    rows = []
     with requests.Session() as session:
         session.headers.update({"User-Agent": "ProspectOneStatsSnapshot/1.0"})
+
+        print(f"Indexing MLB drafts {DRAFT_YEARS_TO_INDEX.start}-{DRAFT_YEARS_TO_INDEX.stop - 1}...",
+              file=sys.stderr)
+        draft_index = build_draft_index(session)
+        print(f"  ...{len(draft_index)} drafted players indexed", file=sys.stderr)
+
+        rows = []
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {pool.submit(fetch_player_row, session, name, overrides): name for name in names}
+            futures = {
+                pool.submit(fetch_player_row, session, name, age_hint, overrides, draft_index): name
+                for name, age_hint in players.items()
+            }
             done = 0
             for future in as_completed(futures):
                 rows.append(future.result())
                 done += 1
                 if done % 50 == 0:
-                    print(f"  ...{done}/{len(names)}", file=sys.stderr)
+                    print(f"  ...{done}/{len(players)}", file=sys.stderr)
 
     rows.sort(key=lambda r: r["name"])
 

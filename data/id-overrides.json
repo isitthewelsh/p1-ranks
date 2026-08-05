@@ -1,0 +1,4 @@
+{
+  "_comment": "Manual name -> MLB Stats API player ID overrides, for players whose direct /people/{id} record exists but who don't turn up in /people/search?names= for any reason (observed: MLB's search index sometimes lags for very recently drafted players). Add an entry here if a player's stats aren't filling in despite having a real milb.com or mlb.com player page -- the numeric ID is the last segment of that page's URL.",
+  "Seth Hernandez": 815825
+}

@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 INDEX_HTML = ROOT / "index.html"
 OUT_CSV = ROOT / "data" / "stats-snapshot.csv"
 OUT_META = ROOT / "data" / "meta.json"
+ID_OVERRIDES_FILE = ROOT / "data" / "id-overrides.json"
 
 SEASONS_TO_TRY = [2026, 2025]
 # (sportId, display label), checked in order -- MLB first, then most advanced
@@ -60,7 +61,16 @@ def collect_player_names():
     return sorted(names)
 
 
-def fetch_player_id(session, name):
+def load_id_overrides():
+    if not ID_OVERRIDES_FILE.exists():
+        return {}
+    data = json.loads(ID_OVERRIDES_FILE.read_text(encoding="utf-8"))
+    return {k: v for k, v in data.items() if not k.startswith("_")}
+
+
+def fetch_player_id(session, name, overrides):
+    if name in overrides:
+        return overrides[name]
     url = "https://statsapi.mlb.com/api/v1/people/search?names=" + quote(name)
     try:
         r = session.get(url, timeout=REQUEST_TIMEOUT)
@@ -90,8 +100,8 @@ def fetch_season_stat(session, player_id, group, season, sport_id):
     return None
 
 
-def fetch_player_row(session, name):
-    player_id = fetch_player_id(session, name)
+def fetch_player_row(session, name, overrides):
+    player_id = fetch_player_id(session, name, overrides)
     row = {
         "name": name,
         "mlb_id": player_id or "",
@@ -128,13 +138,15 @@ def fetch_player_row(session, name):
 
 def main():
     names = collect_player_names()
-    print(f"Found {len(names)} unique players across TOP500 + DYNASTY", file=sys.stderr)
+    overrides = load_id_overrides()
+    print(f"Found {len(names)} unique players across TOP500 + DYNASTY "
+          f"({len(overrides)} manual ID overrides loaded)", file=sys.stderr)
 
     rows = []
     with requests.Session() as session:
         session.headers.update({"User-Agent": "ProspectOneStatsSnapshot/1.0"})
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-            futures = {pool.submit(fetch_player_row, session, name): name for name in names}
+            futures = {pool.submit(fetch_player_row, session, name, overrides): name for name in names}
             done = 0
             for future in as_completed(futures):
                 rows.append(future.result())

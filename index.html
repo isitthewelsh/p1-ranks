@@ -639,7 +639,7 @@ async function fetchHeadshot(imgEl, name, initialsEl){
   if(id){
     const url = `https://img.mlbstatic.com/mlb-photos/image/upload/w_120,q_auto:best,f_auto/v1/people/${id}/headshot/67/current`;
     imgEl.onerror = () => { imgEl.style.display='none'; if(initialsEl) initialsEl.style.display='flex'; };
-    imgEl.onload = () => { if(initialsEl) initialsEl.style.display='none'; };
+    imgEl.onload = () => { imgEl.style.display='block'; if(initialsEl) initialsEl.style.display='none'; };
     imgEl.src = url;
   }
   return id;

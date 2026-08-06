@@ -1,3 +1,9 @@
 .DS_Store
 .claude/
 .ai/
+.github/agents/
+.github/hooks/
+.github/skills/
+.impeccable/
+DESIGN.md
+PRODUCT.md

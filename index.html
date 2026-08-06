@@ -6,7 +6,7 @@
 <title>Prospect One — 2026 Rankings</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
   --bg: #0b1712;
@@ -28,7 +28,7 @@
   --up: #6fbf6a;
   --down: #e58079;
   --font-display: 'Anton', sans-serif;
-  --font-body: 'Inter', sans-serif;
+  --font-body: 'IBM Plex Sans', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
   --radius: 10px;
 }
@@ -46,15 +46,6 @@ body{
 }
 ::selection{ background:var(--clay); color:#0b1712;}
 a{color:inherit;}
-
-/* subtle chalk-line texture */
-body::before{
-  content:"";
-  position:fixed; inset:0;
-  background-image: repeating-linear-gradient(0deg, rgba(255,255,255,0.012) 0px, rgba(255,255,255,0.012) 1px, transparent 1px, transparent 3px);
-  pointer-events:none;
-  z-index:0;
-}
 
 /* ---------- HEADER / NAV ---------- */
 header.top{
@@ -278,7 +269,7 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
 }
 .team-tag{ font-weight:700; letter-spacing:0.3px; }
 .move{
-  font-family:var(--font-mono); font-size:10.5px; margin-top:2px;
+  font-family:var(--font-mono); font-size:11px; margin-top:2px;
   display:flex; gap:8px; color:var(--muted-2);
 }
 .move .up{ color:var(--up); }
@@ -291,7 +282,7 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
   font-family:var(--font-mono);
   display:flex; flex-direction:column; justify-content:center; gap:2px;
 }
-.stat-row{ display:flex; justify-content:space-between; font-size:10.5px; gap:6px; }
+.stat-row{ display:flex; justify-content:space-between; font-size:11px; gap:6px; }
 .stat-row .k{ color:var(--muted); }
 .stat-row .v{ color:var(--chalk-dim); font-weight:600; }
 .stat-level{
@@ -319,7 +310,7 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
   padding:12px 16px;
   cursor:pointer;
   user-select:none;
-  border-left:5px solid var(--clay);
+  border-bottom:1px solid var(--line-soft);
   background:var(--panel-2);
 }
 .group-head .gname{
@@ -349,9 +340,9 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
 .row .r-photo img{ width:100%; height:100%; object-fit:cover; }
 .row .r-photo .initials{ font-family:var(--font-display); font-size:10px; color:var(--muted); }
 .row .r-name{ flex:1; min-width:0; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.row .r-pos{ font-family:var(--font-mono); font-size:10.5px; color:var(--muted); width:56px; flex:none; }
-.row .r-age{ font-family:var(--font-mono); font-size:10.5px; color:var(--muted-2); width:44px; flex:none; text-align:right;}
-.row .r-mlb{ font-family:var(--font-mono); font-size:10.5px; color:var(--muted-2); width:52px; flex:none; text-align:right;}
+.row .r-pos{ font-family:var(--font-mono); font-size:11px; color:var(--muted); width:56px; flex:none; }
+.row .r-age{ font-family:var(--font-mono); font-size:11px; color:var(--muted-2); width:44px; flex:none; text-align:right;}
+.row .r-mlb{ font-family:var(--font-mono); font-size:11px; color:var(--muted-2); width:52px; flex:none; text-align:right;}
 
 /* ---------- FYPD DRAFT BOARD ---------- */
 .draft-rounds{ display:flex; flex-direction:column; gap:10px; }
@@ -362,7 +353,7 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
   padding:10px 16px; background:var(--panel-2);
   font-family:var(--font-display); font-size:14px; letter-spacing:0.5px; text-transform:uppercase;
   color:var(--gold);
-  border-left:5px solid var(--gold-dim);
+  border-bottom:1px solid var(--line-soft);
 }
 .pick-grid{
   display:grid; grid-template-columns:repeat(auto-fill, minmax(230px,1fr));
@@ -378,7 +369,7 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
   width:28px; flex:none;
 }
 .pick-info .pname{ font-weight:700; font-size:13px; }
-.pick-info .pmeta{ font-family:var(--font-mono); font-size:10.5px; color:var(--muted); margin-top:2px;}
+.pick-info .pmeta{ font-family:var(--font-mono); font-size:11px; color:var(--muted); margin-top:2px;}
 
 /* ---------- MODAL (player detail) ---------- */
 .modal-backdrop{
@@ -391,7 +382,7 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
 .modal{
   background:var(--panel); border:1px solid var(--line); border-radius:14px;
   max-width:420px; width:100%; padding:22px; position:relative;
-  box-shadow:0 30px 60px -20px rgba(0,0,0,0.7);
+  box-shadow:0 12px 28px -10px rgba(0,0,0,0.55);
 }
 .modal .close{
   position:absolute; top:14px; right:14px; background:none; border:none;
@@ -413,7 +404,7 @@ main{ max-width:1400px; margin:0 auto; padding:26px 24px 80px 24px; position:rel
 
 /* ---------- MISC ---------- */
 .legend{
-  font-family:var(--font-mono); font-size:10.5px; color:var(--muted-2);
+  font-family:var(--font-mono); font-size:11px; color:var(--muted-2);
   margin-top:6px; display:flex; gap:14px; flex-wrap:wrap;
 }
 .empty-state{
